@@ -14,43 +14,19 @@
 package main
 
 import (
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// OpenhabStats is an example for a system that might have been built without
-// Prometheus in mind. It models a central manager of jobs running in a
-// cluster. Thus, we implement a custom Collector called
-// OpenhabStatsCollector, which collects information from a OpenhabStats
-// using its provided methods and turns them into Prometheus Metrics for
-// collection.
-//
-// An additional challenge is that multiple instances of the OpenhabStats are
-// run within the same binary, each in charge of a different zone. We need to
-// make use of wrapping Registerers to be able to register each
-// OpenhabStatsCollector instance with Prometheus.
-type OpenhabStats struct {
-	Zone string
-	// Contains many more fields not listed in this example.
-}
-
-// ReallyExpensiveAssessmentOfTheSystemState is a mock for the data gathering a
-// real cluster manager would have to do. Since it may actually be really
-// expensive, it must only be called once per collection. This implementation,
-// obviously, only returns some made-up data.
-func (c *OpenhabStats) ReallyExpensiveAssessmentOfTheSystemState() []Item {
-	return doAuthRequest("http://192.168.0.116:8080/rest/items")
-
-}
-
 // OpenhabStatsCollector implements the Collector interface.
 type OpenhabStatsCollector struct {
-	OpenhabStats *OpenhabStats
+	logger log.Logger
 }
 
 // Descriptors used by the OpenhabStatsCollector below.
@@ -62,64 +38,70 @@ var (
 	)
 )
 
-// Describe is implemented with DescribeByCollect. That's possible because the
-// Collect method will always return the same two metrics with the same two
-// descriptors.
+// Describe is implemented with DescribeByCollect.
 func (cc OpenhabStatsCollector) Describe(ch chan<- *prometheus.Desc) {
 	prometheus.DescribeByCollect(cc, ch)
 }
 
-// Collect first triggers the ReallyExpensiveAssessmentOfTheSystemState. Then it
-// creates constant metrics for each host on the fly based on the returned data.
-//
-// Note that Collect could be called concurrently, so we depend on
-// ReallyExpensiveAssessmentOfTheSystemState to be concurrency-safe.
+// Collect Collect
 func (cc OpenhabStatsCollector) Collect(ch chan<- prometheus.Metric) {
-	stats := cc.OpenhabStats.ReallyExpensiveAssessmentOfTheSystemState()
+	stats, err := getRestItems()
 
-	// rand.Seed(time.Now().UnixNano())
+	if err != nil {
+		level.Error(cc.logger).Log("msg", "Error getting items", "err", err)
+	}
 
 	for _, item := range stats {
-		ch <- prometheus.MustNewConstMetric(
-			oomCountDesc,
-			prometheus.GaugeValue,
-			func() float64 {
-				f, _ := strconv.ParseFloat(item.State, 64)
-				return f
-			}(),
-			item.Name,
-			item.Label,
-			item.Type,
-			strings.Join(item.Tags, ";"),
-			strings.Join(item.GroupNames, ";"),
-		)
+		process := true
+		switch item.Type {
+		case "Number":
+		case "Dimmer":
+		case "Switch":
+		case "Contact":
+		default:
+			process = false
+		}
+		if process {
+			ch <- prometheus.MustNewConstMetric(
+				oomCountDesc,
+				prometheus.GaugeValue,
+				func() float64 {
+					f := 0.0
+					switch item.State {
+					case "CLOSED":
+						f = 0
+					case "OFF":
+						f = 0
+					case "ON":
+						f = 1
+					case "OPEN":
+						f = 1
+					case "NULL":
+						break
+					default:
+						// fmt.Println(item.Name, item.Type, item.State)
+						f, _ = strconv.ParseFloat(item.State, 64)
+					}
+					return f
+				}(),
+				item.Name,
+				item.Label,
+				item.Type,
+				strings.Join(item.Tags, ";"),
+				strings.Join(item.GroupNames, ";"),
+			)
+		} else {
+			// fmt.Println("SKIPED: ", item.Name, item.Type, item.State)
+			level.Debug(cc.logger).Log("msg", "Skipped item", "name", item.Name, "type", item.Type, "state", item.State)
+		}
 	}
-
 }
 
-// NewOpenhabStats first creates a Prometheus-ignorant OpenhabStats
-// instance. Then, it creates a OpenhabStatsCollector for the just created
-// OpenhabStats. Finally, it registers the OpenhabStatsCollector with a
-// wrapping Registerer that adds the zone as a label. In this way, the metrics
-// collected by different OpenhabStatsCollectors do not collide.
-func NewOpenhabStats(zone string, reg prometheus.Registerer) *OpenhabStats {
-	c := &OpenhabStats{
-		Zone: zone,
-	}
-	cc := OpenhabStatsCollector{OpenhabStats: c}
-	prometheus.WrapRegistererWith(prometheus.Labels{"zone": zone}, reg).MustRegister(cc)
-	return c
-}
-
-//HandleCollector HandleCollector
-func HandleCollector() {
-	// Since we are dealing with custom Collector implementations, it might
-	// be a good idea to try it out with a pedantic registry.
+func handleCollector(logger log.Logger) {
 	reg := prometheus.NewPedanticRegistry()
 
-	// Construct cluster managers. In real code, we would assign them to
-	// variables to then do something with them.
-	NewOpenhabStats("db", reg)
+	cc := OpenhabStatsCollector{logger: logger}
+	reg.MustRegister(cc)
 
 	// Add the standard process and Go metrics to the custom registry.
 	reg.MustRegister(
@@ -128,5 +110,4 @@ func HandleCollector() {
 	)
 
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
-	log.Fatal(http.ListenAndServe(":8080", nil))
 }

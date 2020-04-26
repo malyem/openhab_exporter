@@ -4,36 +4,22 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
+	"net/url"
+	"os"
+	"path"
 
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/go-kit/kit/log/level"
+	"github.com/prometheus/common/promlog"
+	"github.com/prometheus/common/promlog/flag"
+	"github.com/prometheus/common/version"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 var (
-	apiurl = kingpin.Flag("apiurl", "http API url to Openhab instance").Required().String()
-
-	opsQueued = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "openhab",
-			Subsystem: "temperature",
-			Name:      "current",
-			Help:      "Temerature",
-		},
-		[]string{
-			// Which user has requested the operation?
-			"user",
-			// Of what type is the operation?
-			"type",
-		},
-	)
+	apiurl        = kingpin.Flag("apiurl", "http API url to Openhab instance").Required().String()
+	listenAddress = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9266").String()
 )
-
-//Items array of Item
-type Items struct {
-	Collection []Item
-}
 
 //Item of items
 type Item struct {
@@ -46,70 +32,63 @@ type Item struct {
 	GroupNames []string `json:"groupNames"`
 }
 
-// func main() {
-// 	ExampleCollector()
-// }
-
 func main() {
-	HandleCollector()
+	promlogConfig := &promlog.Config{}
+	flag.AddFlags(kingpin.CommandLine, promlogConfig)
+	kingpin.HelpFlag.Short('h')
+	kingpin.Parse()
+	logger := promlog.New(promlogConfig)
+
+	level.Info(logger).Log("msg", "Starting openhab_exporter", "version", version.Info())
+	level.Info(logger).Log("build_context", version.BuildContext())
+
+	handleCollector(logger)
+
+	level.Info(logger).Log("msg", "Listening on address", "address", *listenAddress)
+	if err := http.ListenAndServe(*listenAddress, nil); err != nil {
+		level.Error(logger).Log("msg", "Error starting HTTP server", "err", err)
+		os.Exit(1)
+	}
 }
 
-// func main() {
+func getRestItems() (i []Item, err error) {
+	u, err := url.Parse(*apiurl)
+	if err != nil {
+		return nil, err
+	}
 
-// 	// prometheus.MustRegister(opsQueued)
-// 	prometheus.MustRegister(opsQueued)
-// 	kingpin.Parse()
-// 	fmt.Printf("%s\n", *apiurl)
+	u.Path = path.Join(u.Path, "rest/items")
 
-// 	itemName := make(chan string)
-// 	go doAuthRequest("http://192.168.0.116:8080/rest/items", itemName)
+	body, err := getRest(u.String())
+	if err != nil {
+		return nil, err
+	}
 
-// 	// Increase a value using compact (but order-sensitive!) WithLabelValues().
-// 	rand.Seed(time.Now().UnixNano())
-// 	for i := range itemName {
-// 		fmt.Printf("%+v", i)
-// 		opsQueued.WithLabelValues(i, "put").Add(rand.Float64() * 100)
-// 	}
-// 	// Increase a value with a map using WithLabels. More verbose, but order
-// 	// doesn't matter anymore.
-// 	opsQueued.With(prometheus.Labels{"type": "delete", "user": "alice"}).Inc()
-
-// 	http.Handle("/metrics", promhttp.Handler())
-// 	http.ListenAndServe(":2112", nil)
-// }
-
-func doAuthRequest(url string) []Item {
-	body := doReq(url)
-	var jsonBody []Item
-	json.Unmarshal([]byte(body), &jsonBody)
-	return jsonBody
-	// parseToken(jsonBody.Token)
-	// fmt.Printf("%+v", jsonBody)
-	// for _, item := range jsonBody {
-	// 	c <- item.Name
-	// }
-	// close(c)
+	var items []Item
+	json.Unmarshal([]byte(body), &items)
+	return items, nil
 }
 
-func doReq(url string) []byte {
-	urlReq := url
-
-	req, err := http.NewRequest("GET", urlReq, nil)
-	req.Header.Set("Content-Type", "application/json")
-	// req.SetBasicAuth(config.AppConfig.Username, config.AppConfig.Password)
+func getRest(endpoint string) (resp []byte, err error) {
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+
+	response, err := client.Do(req)
 	if err != nil {
-		panic(err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := ioutil.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		fmt.Println("HTTP Response Status:", resp.StatusCode, http.StatusText(resp.StatusCode))
-		log.Panicln(fmt.Sprint("Response Body:", string(body)))
+		return nil, err
 	}
 
-	return body
+	defer response.Body.Close()
+
+	body, _ := ioutil.ReadAll(response.Body)
+
+	if response.StatusCode != 200 {
+		return nil, fmt.Errorf("Expected http response code 200 got %d, check `apiurl`", response.StatusCode)
+	}
+
+	return body, nil
 }
