@@ -24,26 +24,26 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// OpenhabStatsCollector implements the Collector interface.
+// OpenhabStatsCollector implements the Collector interface
 type OpenhabStatsCollector struct {
 	logger log.Logger
 }
 
-// Descriptors used by the OpenhabStatsCollector below.
+// Descriptors
 var (
-	oomCountDesc = prometheus.NewDesc(
+	metricDescriptions = prometheus.NewDesc(
 		"openhab_item_state_current",
 		"Openhab items current state",
 		[]string{"item", "label", "type", "tags", "groupnames"}, nil,
 	)
 )
 
-// Describe is implemented with DescribeByCollect.
+// Describe implements DescribeByCollect
 func (cc OpenhabStatsCollector) Describe(ch chan<- *prometheus.Desc) {
 	prometheus.DescribeByCollect(cc, ch)
 }
 
-// Collect Collect
+// Collect collects data from items
 func (cc OpenhabStatsCollector) Collect(ch chan<- prometheus.Metric) {
 	stats, err := getRestItems()
 
@@ -63,7 +63,7 @@ func (cc OpenhabStatsCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		if process {
 			ch <- prometheus.MustNewConstMetric(
-				oomCountDesc,
+				metricDescriptions,
 				prometheus.GaugeValue,
 				func() float64 {
 					f := 0.0
@@ -79,7 +79,6 @@ func (cc OpenhabStatsCollector) Collect(ch chan<- prometheus.Metric) {
 					case "NULL":
 						break
 					default:
-						// fmt.Println(item.Name, item.Type, item.State)
 						f, _ = strconv.ParseFloat(item.State, 64)
 					}
 					return f
@@ -91,7 +90,6 @@ func (cc OpenhabStatsCollector) Collect(ch chan<- prometheus.Metric) {
 				strings.Join(item.GroupNames, ";"),
 			)
 		} else {
-			// fmt.Println("SKIPED: ", item.Name, item.Type, item.State)
 			level.Debug(cc.logger).Log("msg", "Skipped item", "name", item.Name, "type", item.Type, "state", item.State)
 		}
 	}
@@ -103,7 +101,6 @@ func handleCollector(logger log.Logger) {
 	cc := OpenhabStatsCollector{logger: logger}
 	reg.MustRegister(cc)
 
-	// Add the standard process and Go metrics to the custom registry.
 	reg.MustRegister(
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 		prometheus.NewGoCollector(),

@@ -17,8 +17,8 @@ import (
 )
 
 var (
-	apiurl        = kingpin.Flag("apiurl", "http API url to Openhab instance").Required().String()
-	listenAddress = kingpin.Flag("web.listen-address", "Address to listen on for web interface and telemetry.").Default(":9266").String()
+	apiurl        = kingpin.Flag("apiurl", "Address on which Openhab instance runs").Required().String()
+	listenAddress = kingpin.Flag("web.listen-address", "Address on which to expose metrics and web interface.").Default(":9266").String()
 )
 
 //Item of items
