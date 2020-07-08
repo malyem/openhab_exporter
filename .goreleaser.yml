@@ -1,0 +1,30 @@
+before:
+  hooks:
+    # You may remove this if you don't use go modules.
+    - go mod download
+    # you may remove this if you don't need go generate
+    - go generate ./...
+builds:
+- env:
+  - CGO_ENABLED=0
+  goarch:
+    - amd64
+    - arm
+    - arm64
+  goos:
+    - linux
+    - windows
+    - darwin
+
+project_name: openhab_exporter
+
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ .Tag }}"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+    - '^docs:'
+    - '^test:'
